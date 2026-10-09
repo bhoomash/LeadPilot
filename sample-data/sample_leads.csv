@@ -1,0 +1,25 @@
+company_name,website,contact_name,contact_email,industry,location,employee_count
+Quantum Dynamics,https://www.quantumdynamics.example.com,Sarah Chen,sarah.chen@quantumdynamics.example.com,Technology,San Francisco CA,450
+NovaPay Solutions,https://www.novapay.example.com,Michael Torres,m.torres@novapay.example.com,Fintech,New York NY,120
+GreenLeaf Analytics,https://www.greenleaf.example.com,Emily Watson,e.watson@greenleaf.example.com,Data Analytics,Austin TX,85
+MediCore Health,https://www.medicore.example.com,Dr. James Liu,j.liu@medicore.example.com,Healthcare,Boston MA,320
+CloudVault Systems,https://www.cloudvault.example.com,Priya Sharma,priya@cloudvault.example.com,Cloud Computing,Seattle WA,200
+Apex Marketing Group,https://www.apexmarketing.example.com,David Kim,d.kim@apexmarketing.example.com,Digital Marketing,Chicago IL,55
+TerraForge Industries,https://www.terraforge.example.com,Robert Martinez,r.martinez@terraforge.example.com,Manufacturing,Detroit MI,1200
+ByteStream Software,https://www.bytestream.example.com,Anna Kowalski,anna.k@bytestream.example.com,Software,Portland OR,95
+Pinnacle Consulting,,Jennifer Adams,j.adams@pinnacle.example.com,Consulting,Denver CO,30
+SilverLine Logistics,https://www.silverline.example.com,Mark Johnson,,Logistics,Atlanta GA,500
+NovaPay Solutions,https://www.novapay.example.com,Carlos Ruiz,c.ruiz@novapay.example.com,Fintech,New York NY,120
+Zenith Cybersec,https://www.zenithcyber.example.com,Rachel Green,r.green@zenithcyber.example.com,Cybersecurity,Washington DC,150
+EcoWare Technologies,https://www.ecoware.example.com,Liam O'Brien,liam@ecoware.example.com,SaaS,Dublin Ireland,40
+,https://www.noname.example.com,Ghost Contact,ghost@noname.example.com,Technology,Nowhere,10
+FusionAI Labs,https://www.fusionai.example.com,Wei Zhang,w.zhang@fusionai.example.com,Artificial Intelligence,Palo Alto CA,75
+Redwood Financial,https://www.redwoodfinancial.example.com,Patricia Moore,p.moore@redwoodfinancial.example.com,Finance,Charlotte NC,280
+StarBridge Education,https://www.starbridge.example.com,Omar Hassan,,Education,Toronto Canada,60
+CrestView Properties,,Thomas Brown,,Real Estate,Miami FL,
+Quantum Dynamics,https://www.quantumdynamics.example.com,Li Wei,li.wei@quantumdynamics.example.com,Technology,San Francisco CA,450
+AquaPure Solutions,https://www.aquapure.example.com,Maria Garcia,m.garcia@aquapure.example.com,E-Commerce,Los Angeles CA,110
+NexGen Robotics,https://www.nexgenrobotics.example.com,Alex Petrov,alex@nexgenrobotics.example.com,Technology,Munich Germany,180
+VitalPath Biotech,https://www.vitalpath.example.com,Dr. Susan Park,s.park@vitalpath.example.com,Biotech,San Diego CA,90
+Orbit Digital,https://www.orbitdigital.example.com,Jason Lee,bademaildotcom,Digital Marketing,London UK,25
+DataMesh Corp,https://www.datamesh.example.com,Karen White,k.white@datamesh.example.com,Enterprise Software,Dallas TX,350
