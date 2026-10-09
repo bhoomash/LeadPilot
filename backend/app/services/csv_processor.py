@@ -6,7 +6,7 @@ Handles column mapping, row validation, normalization, and safe export.
 import csv
 import io
 import re
-from typing import BinaryString
+from typing import Optional, List, Dict, Tuple, Set
 from app.services.validation import (
     is_valid_email,
     normalize_email,

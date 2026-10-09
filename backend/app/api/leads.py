@@ -195,213 +195,7 @@ def list_leads(
 
 
 # ---------------------------------------------------------------------------
-# Single lead CRUD
-# ---------------------------------------------------------------------------
-
-@router.get("/{lead_id}", response_model=LeadResponse)
-def get_lead(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    return _lead_to_response(lead)
-
-
-@router.post("", response_model=LeadResponse, status_code=201)
-def create_lead(data: LeadCreate, db: Session = Depends(get_db)):
-    lead = Lead(
-        company_name=data.company_name.strip(),
-        website=normalize_url(data.website),
-        normalized_domain=extract_domain(data.website),
-        contact_name=data.contact_name.strip() if data.contact_name else None,
-        contact_email=data.contact_email.strip() if data.contact_email else None,
-        normalized_email=normalize_email(data.contact_email),
-        industry=data.industry.strip() if data.industry else None,
-        location=data.location.strip() if data.location else None,
-        employee_count=data.employee_count,
-    )
-    _score_and_update(lead, db)
-    db.add(lead)
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(lead)
-
-
-@router.put("/{lead_id}", response_model=LeadResponse)
-def update_lead(lead_id: int, data: LeadUpdate, db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if isinstance(value, str):
-            value = value.strip()
-        setattr(lead, field, value)
-
-    # Re-normalize derived fields
-    if "website" in update_data:
-        lead.website = normalize_url(lead.website)
-        lead.normalized_domain = extract_domain(lead.website)
-    if "contact_email" in update_data:
-        lead.normalized_email = normalize_email(lead.contact_email)
-
-    _score_and_update(lead, db)
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(lead)
-
-
-@router.delete("/{lead_id}", status_code=204)
-def delete_lead(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    db.delete(lead)
-    db.commit()
-
-
-# ---------------------------------------------------------------------------
-# Recalculate score
-# ---------------------------------------------------------------------------
-
-@router.post("/{lead_id}/recalculate", response_model=LeadResponse)
-def recalculate_lead(lead_id: int, db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    _score_and_update(lead, db)
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(lead)
-
-
-# ---------------------------------------------------------------------------
-# CSV Import
-# ---------------------------------------------------------------------------
-
-@router.post("/import", response_model=ImportSummary)
-async def import_leads(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    # Guard: content type
-    if file.content_type and file.content_type not in (
-        "text/csv",
-        "application/vnd.ms-excel",
-        "application/octet-stream",
-        "text/plain",
-    ):
-        raise HTTPException(status_code=400, detail="Only CSV files are accepted")
-
-    # Guard: size
-    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    content = await file.read()
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File exceeds maximum size of {settings.MAX_UPLOAD_SIZE_MB} MB",
-        )
-
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-    # Parse
-    parsed = parse_csv(content, max_rows=settings.MAX_IMPORT_ROWS)
-
-    if parsed["parse_errors"]:
-        # If there's a fatal parse error (empty file, no headers), return early
-        fatal = [e for e in parsed["parse_errors"] if e["field"] == "file"]
-        if fatal and not parsed["rows"]:
-            return ImportSummary(
-                total_rows=0,
-                valid_rows=0,
-                invalid_rows=0,
-                duplicate_rows=0,
-                imported_rows=0,
-                errors=[RowError(**e) for e in parsed["parse_errors"]],
-                duplicates=[],
-            )
-
-    total_rows = len(parsed["rows"])
-
-    # Validate
-    valid_rows, validation_errors = validate_rows(parsed["rows"])
-
-    # Deduplicate — within batch
-    batch_dupes = find_duplicates_in_batch(valid_rows)
-
-    # Deduplicate — against DB
-    db_dupes = find_duplicates_in_db(db, valid_rows, set(batch_dupes.keys()))
-
-    all_dupe_indices = set(batch_dupes.keys()) | set(db_dupes.keys())
-
-    # Build duplicate report
-    duplicate_reports = []
-    for idx in sorted(all_dupe_indices):
-        reason = batch_dupes.get(idx) or db_dupes.get(idx, "Duplicate detected")
-        company = valid_rows[idx].get("company_name", "Unknown")
-        duplicate_reports.append(ImportDuplicate(
-            row=idx + 2,  # 1-indexed, header=1
-            company_name=company,
-            reason=reason,
-        ))
-
-    # Import non-duplicate valid rows
-    weights, thresholds = _get_scoring_settings(db)
-    imported_count = 0
-
-    for idx, row in enumerate(valid_rows):
-        if idx in all_dupe_indices:
-            continue
-
-        lead = Lead(
-            company_name=row.get("company_name", "").strip(),
-            website=row.get("website"),
-            normalized_domain=row.get("normalized_domain"),
-            contact_name=row.get("contact_name", "").strip() if row.get("contact_name") else None,
-            contact_email=row.get("contact_email"),
-            normalized_email=row.get("normalized_email"),
-            industry=row.get("industry", "").strip() if row.get("industry") else None,
-            location=row.get("location", "").strip() if row.get("location") else None,
-            employee_count=row.get("employee_count"),
-        )
-
-        # Score
-        lead_data = {
-            "company_name": lead.company_name,
-            "website": lead.website,
-            "contact_name": lead.contact_name,
-            "contact_email": lead.contact_email,
-            "industry": lead.industry,
-            "location": lead.location,
-            "employee_count": lead.employee_count,
-        }
-        result = calculate_score(lead_data, weights, thresholds)
-        lead.qualification_score = result["score"]
-        lead.priority = result["priority"]
-        lead.score_breakdown = score_to_json(result["breakdown"])
-        lead.data_quality_status = result["data_quality_status"]
-
-        db.add(lead)
-        imported_count += 1
-
-    db.commit()
-
-    return ImportSummary(
-        total_rows=total_rows,
-        valid_rows=len(valid_rows),
-        invalid_rows=total_rows - len(valid_rows),
-        duplicate_rows=len(all_dupe_indices),
-        imported_rows=imported_count,
-        errors=[RowError(**e) for e in validation_errors] + [
-            RowError(**e) for e in parsed.get("parse_errors", [])
-        ],
-        duplicates=duplicate_reports,
-    )
-
-
-# ---------------------------------------------------------------------------
-# CSV Export
+# CSV Export (Must be declared before /{lead_id})
 # ---------------------------------------------------------------------------
 
 @router.get("/export")
@@ -464,7 +258,7 @@ def export_leads(
 
 
 # ---------------------------------------------------------------------------
-# Sample template download
+# Sample template download (Must be declared before /{lead_id})
 # ---------------------------------------------------------------------------
 
 @router.get("/template")
@@ -474,3 +268,202 @@ def download_template():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=sample_leads_template.csv"},
     )
+
+
+# ---------------------------------------------------------------------------
+# CSV Import (Must be declared before /{lead_id})
+# ---------------------------------------------------------------------------
+
+@router.post("/import", response_model=ImportSummary)
+async def import_leads(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    # Guard: content type
+    if file.content_type and file.content_type not in (
+        "text/csv",
+        "application/vnd.ms-excel",
+        "application/octet-stream",
+        "text/plain",
+    ):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted")
+
+    # Guard: size
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File exceeds maximum size of {settings.MAX_UPLOAD_SIZE_MB} MB",
+        )
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    # Parse
+    parsed = parse_csv(content, max_rows=settings.MAX_IMPORT_ROWS)
+
+    if parsed["parse_errors"]:
+        fatal = [e for e in parsed["parse_errors"] if e["field"] == "file"]
+        if fatal and not parsed["rows"]:
+            return ImportSummary(
+                total_rows=0,
+                valid_rows=0,
+                invalid_rows=0,
+                duplicate_rows=0,
+                imported_rows=0,
+                errors=[RowError(**e) for e in parsed["parse_errors"]],
+                duplicates=[],
+            )
+
+    total_rows = len(parsed["rows"])
+
+    # Validate
+    valid_rows, validation_errors = validate_rows(parsed["rows"])
+
+    # Deduplicate — within batch
+    batch_dupes = find_duplicates_in_batch(valid_rows)
+
+    # Deduplicate — against DB
+    db_dupes = find_duplicates_in_db(db, valid_rows, set(batch_dupes.keys()))
+
+    all_dupe_indices = set(batch_dupes.keys()) | set(db_dupes.keys())
+
+    # Build duplicate report
+    duplicate_reports = []
+    for idx in sorted(all_dupe_indices):
+        reason = batch_dupes.get(idx) or db_dupes.get(idx, "Duplicate detected")
+        company = valid_rows[idx].get("company_name", "Unknown")
+        duplicate_reports.append(ImportDuplicate(
+            row=idx + 2,
+            company_name=company,
+            reason=reason,
+        ))
+
+    # Import non-duplicate valid rows
+    weights, thresholds = _get_scoring_settings(db)
+    imported_count = 0
+
+    for idx, row in enumerate(valid_rows):
+        if idx in all_dupe_indices:
+            continue
+
+        lead = Lead(
+            company_name=row.get("company_name", "").strip(),
+            website=row.get("website"),
+            normalized_domain=row.get("normalized_domain"),
+            contact_name=row.get("contact_name", "").strip() if row.get("contact_name") else None,
+            contact_email=row.get("contact_email"),
+            normalized_email=row.get("normalized_email"),
+            industry=row.get("industry", "").strip() if row.get("industry") else None,
+            location=row.get("location", "").strip() if row.get("location") else None,
+            employee_count=row.get("employee_count"),
+        )
+
+        lead_data = {
+            "company_name": lead.company_name,
+            "website": lead.website,
+            "contact_name": lead.contact_name,
+            "contact_email": lead.contact_email,
+            "industry": lead.industry,
+            "location": lead.location,
+            "employee_count": lead.employee_count,
+        }
+        result = calculate_score(lead_data, weights, thresholds)
+        lead.qualification_score = result["score"]
+        lead.priority = result["priority"]
+        lead.score_breakdown = score_to_json(result["breakdown"])
+        lead.data_quality_status = result["data_quality_status"]
+
+        db.add(lead)
+        imported_count += 1
+
+    db.commit()
+
+    return ImportSummary(
+        total_rows=total_rows,
+        valid_rows=len(valid_rows),
+        invalid_rows=total_rows - len(valid_rows),
+        duplicate_rows=len(all_dupe_indices),
+        imported_rows=imported_count,
+        errors=[RowError(**e) for e in validation_errors] + [
+            RowError(**e) for e in parsed.get("parse_errors", [])
+        ],
+        duplicates=duplicate_reports,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Single lead CRUD & Recalculate
+# ---------------------------------------------------------------------------
+
+@router.get("/{lead_id}", response_model=LeadResponse)
+def get_lead(lead_id: int, db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return _lead_to_response(lead)
+
+
+@router.post("", response_model=LeadResponse, status_code=201)
+def create_lead(data: LeadCreate, db: Session = Depends(get_db)):
+    lead = Lead(
+        company_name=data.company_name.strip(),
+        website=normalize_url(data.website),
+        normalized_domain=extract_domain(data.website),
+        contact_name=data.contact_name.strip() if data.contact_name else None,
+        contact_email=data.contact_email.strip() if data.contact_email else None,
+        normalized_email=normalize_email(data.contact_email),
+        industry=data.industry.strip() if data.industry else None,
+        location=data.location.strip() if data.location else None,
+        employee_count=data.employee_count,
+    )
+    _score_and_update(lead, db)
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    return _lead_to_response(lead)
+
+
+@router.put("/{lead_id}", response_model=LeadResponse)
+def update_lead(lead_id: int, data: LeadUpdate, db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if isinstance(value, str):
+            value = value.strip()
+        setattr(lead, field, value)
+
+    if "website" in update_data:
+        lead.website = normalize_url(lead.website)
+        lead.normalized_domain = extract_domain(lead.website)
+    if "contact_email" in update_data:
+        lead.normalized_email = normalize_email(lead.contact_email)
+
+    _score_and_update(lead, db)
+    db.commit()
+    db.refresh(lead)
+    return _lead_to_response(lead)
+
+
+@router.delete("/{lead_id}", status_code=204)
+def delete_lead(lead_id: int, db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    db.delete(lead)
+    db.commit()
+
+
+@router.post("/{lead_id}/recalculate", response_model=LeadResponse)
+def recalculate_lead(lead_id: int, db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    _score_and_update(lead, db)
+    db.commit()
+    db.refresh(lead)
+    return _lead_to_response(lead)

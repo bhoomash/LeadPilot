@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.database import get_db
 from app.models.lead import Lead
@@ -90,7 +90,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     # Leads over time — last 30 days, grouped by date
     leads_over_time = []
     if total > 0:
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         time_data = (
             db.query(
                 func.date(Lead.created_at).label("date"),
